@@ -1,6 +1,8 @@
 # architecture.py
 # Version: 1.0
 
+import numpy as np
+import torch
 import torch.nn as nn
 
 
@@ -30,13 +32,13 @@ class DNN(nn.Module):
 
 
 class CNN(nn.Module):
-    def __init__(self):
+    def __init__(self, input_dim, output_dim=2):
         """
         Define model architecture here.
 
 
-        Version 2: 07/07
-        - Refined boilerplate model
+        Version 3: 29/07
+        - Calculate correct layer size based on input shape
         """
         super(CNN, self).__init__()
         self.feature_extractor = nn.Sequential(
@@ -49,10 +51,11 @@ class CNN(nn.Module):
             nn.MaxPool1d(kernel_size=2, stride=2)
         )
 
+        # calculate correct layer sizes
+        conv_out = self._calculate_conv_output(input_dim)
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            # TODO: calculate correct layer sizes instead of using LazyLinear
-            nn.LazyLinear(64),
+            nn.Linear(conv_out, 64),
             nn.ReLU(),
             nn.Dropout(p=0.15),
 
@@ -60,8 +63,13 @@ class CNN(nn.Module):
             nn.ReLU(),
             nn.Dropout(p=0.15),
 
-            nn.Linear(32, 2)
+            nn.Linear(32, output_dim)
         )
+
+    def _calculate_conv_output(self, input_dim):
+        x = torch.randn(1, 1, input_dim)
+        x = self.feature_extractor(x)
+        return int(np.prod(x.size()))
 
     def forward(self, x):
         x = x.unsqueeze(1)  # add channel dimension
