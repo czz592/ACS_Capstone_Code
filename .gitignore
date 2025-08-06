@@ -1,6 +1,12 @@
 dataset/ciciot2023/
 dataset/edge-iiotset/
 
+# pytorch
+*.pt
+*.pth
+
+output/
+
 ####### ------------ ######
 
 # Byte-compiled / optimized / DLL files
