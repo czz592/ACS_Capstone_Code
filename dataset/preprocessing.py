@@ -2,6 +2,7 @@
 # Version: 1.0
 
 
+import os
 import pandas as pd
 import numpy as np
 import torch
@@ -21,8 +22,14 @@ def read_data(data_path: str) -> pd.DataFrame:
     Returns:
         pd.DataFrame: The loaded data.
     """
+    cols_to_use = ['icmp.checksum', 'icmp.seq_le', 'tcp.ack', 'tcp.ack_raw',
+                   'tcp.checksum', 'tcp.connection.fin', 'tcp.connection.rst',
+                   'tcp.connection.syn', 'tcp.dstport', 'tcp.flags', 'tcp.flags.ack',
+                   'tcp.len', 'tcp.seq', 'tcp.srcport', 'udp.stream', 'mqtt.hdrflags',
+                   'mqtt.len', 'mqtt.msgtype', 'Attack_label']
 
-    df = pd.read_csv(data_path, encoding='utf-8', low_memory=False)
+    df = pd.read_csv(data_path, encoding='utf-8',
+                     low_memory=False, usecols=cols_to_use)
     df.drop_duplicates(inplace=True)
     df.dropna(inplace=True)
     return df
@@ -110,9 +117,11 @@ def tensorise_and_wrap(X: pd.DataFrame, y: pd.Series, batch_size=64):
     return loader
 
 
-def split_encode_and_scale(X, y):
+def split_encode_and_scale(df):
     """
     Splits data into training and testing sets, encodes categorical features, and scales numeric features.
+
+    Note: Centralised pipeline function, keeping for archival purposes.
 
     Args:
         X (pd.DataFrame): The features to split, encode, and scale.
@@ -124,6 +133,11 @@ def split_encode_and_scale(X, y):
         y_train (pd.Series): The training labels.
         y_test (pd.Series): The testing labels.
     """
+    assert "Attack_label" in df.columns
+    print(f"{'-'*5}Splitting dataset into train and test...")
+    X = df.drop(columns=["Attack_label"])
+    y = df["Attack_label"]
+
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, stratify=y, random_state=42
     )
@@ -135,6 +149,7 @@ def split_encode_and_scale(X, y):
     ]
 
     # Encoding
+    print(f"{'-'*5}Encoding features...")
     encoder_onehot = ce.OneHotEncoder()
     encoder_count = ce.CountEncoder()
 
@@ -158,6 +173,7 @@ def split_encode_and_scale(X, y):
             X_test['tcp.srcport'].astype(str))
 
     # Scale
+    print(f"{'-'*5}Scaling features...")
     numeric_cols = X_train.select_dtypes(include=["float64", "int64"]).columns
     scaler = MinMaxScaler()
     X_train[numeric_cols] = scaler.fit_transform(X_train[numeric_cols])
@@ -165,7 +181,95 @@ def split_encode_and_scale(X, y):
     return X_train, X_test, y_train, y_test
 
 
-def preprocess(data_path: str = 'dataset/edge-iiotset/eval/DNN-EdgeIIoT-dataset.csv', batch_size=64):
+def fl_encode_and_scale(df) -> pd.DataFrame:
+    """
+    Splits data into features and labels, encodes categorical features and scales numeric features.
+
+    *Note*: The function violates the DRY (Don't Repeat Yourself) principle as it is very similar to split_encode_and_scale, but it's for the federated pipeline, just different enough to necessitate a separate function.
+
+    Args:
+        df (pd.DataFrame): The DataFrame to encode and scale.
+
+    Returns:
+        pd.DataFrame: The encoded and scaled DataFrame.
+    """
+    assert "Attack_label" in df.columns
+
+    X = df.drop(columns=["Attack_label"])
+    y = df["Attack_label"]
+
+    # Identify categorical features
+    categorical_features = [
+        col for col in X.columns
+        if X[col].dtype == object or X[col].nunique() <= 10
+    ]
+
+    # Encoding
+    encoder_onehot = ce.OneHotEncoder()
+    encoder_count = ce.CountEncoder()
+
+    # One-hot for low cardinality
+    X[categorical_features] = X[categorical_features].astype(str)
+
+    low_card = [
+        col for col in categorical_features if X[col].nunique() <= 10]
+    X_oh = encoder_onehot.fit_transform(X[low_card])
+
+    X = X.drop(columns=low_card).join(X_oh)
+
+    # Count encode 'tcp.srcport' if it exists
+    if 'tcp.srcport' in X.columns:
+        X['tcp.srcport'] = encoder_count.fit_transform(
+            X['tcp.srcport'].astype(str))
+
+    # Scale
+    numeric_cols = X.select_dtypes(include=["float64", "int64"]).columns
+    scaler = MinMaxScaler()
+    X[numeric_cols] = scaler.fit_transform(X[numeric_cols])
+
+    X["Attack_label"] = y
+
+    return X
+
+
+def partition_and_save(
+        df: pd.DataFrame,
+        iid: bool = True,
+        seed: int = 42,
+        base_dir: str = 'dataset/edge-iiotset/partitions_'
+):
+    base_output_dir = 'iid' if iid else 'non-iid'
+    output_dir = base_dir + base_output_dir
+
+    for num_clients in [3, 5, 10]:
+        partition_dir = os.path.join(output_dir, f'{num_clients}_clients')
+
+        print(f"Saving {num_clients} partitions to {partition_dir}...")
+
+        os.makedirs(partition_dir, exist_ok=True)
+        df_copy = df.copy()
+
+        if iid:
+            df_copy = df.sample(
+                frac=1, random_state=seed).reset_index(drop=True)
+
+        partitions = np.array_split(df_copy, num_clients)
+
+        for i, partition in enumerate(partitions):
+            partition_path = os.path.join(partition_dir, f'client_{i+1}.csv')
+            partition.to_csv(partition_path, index=False)
+            print(f"{'-'*5}Saved partition {i+1} to {partition_path}")
+
+    print("Partitioning complete.")
+    return
+
+
+def read_partition_data(cid: int, iid: bool = True):
+    data_path = f'dataset/edge-iiotset/partitions_{"iid" if iid else "non-iid"}/client_{cid}.csv'
+    return read_data(data_path)
+
+
+def preprocess_centralised(data_path: str = 'dataset/edge-iiotset/eval/DNN-EdgeIIoT-dataset.csv', batch_size=64):
     """
     Preprocesses the dataset at the given path. 
 
@@ -177,15 +281,11 @@ def preprocess(data_path: str = 'dataset/edge-iiotset/eval/DNN-EdgeIIoT-dataset.
         tuple: A tuple containing the training and testing DataLoader, and a list of column names in the order they appear in the DataLoaders.
     """
 
-    print("Begin preprocessing...")
+    print("Begin centralised preprocessing pipeline...")
     df = read_data(data_path)
-    df = drop_irrelevant_columns(df)
+    # df = drop_irrelevant_columns(df)
 
-    assert "Attack_label" in df.columns
-    X = df.drop(columns=["Attack_label"])
-    y = df["Attack_label"]
-
-    X_train, X_test, y_train, y_test = split_encode_and_scale(X, y)
+    X_train, X_test, y_train, y_test = split_encode_and_scale(df)
 
     # Tensorise
     train_loader = tensorise_and_wrap(X_train, y_train, batch_size)
@@ -194,12 +294,34 @@ def preprocess(data_path: str = 'dataset/edge-iiotset/eval/DNN-EdgeIIoT-dataset.
     return train_loader, test_loader, X_train.columns.tolist()
 
 
-if __name__ == "__main__":
-    train_loader, test_loader, column_names = preprocess()
+def preprocess_federated(
+        data_path: str = 'dataset/edge-iiotset/eval/DNN-EdgeIIoT-dataset.csv',
+        iid: bool = True,
+        seed: int = 42
+):
+    print("Begin federated preprocessing pipeline...")
+    df = read_data(data_path)
 
-    # testing
-    for X, y in train_loader:
-        print(X.shape)
-        print(y.shape)
-        break
-    print(column_names)
+    df = fl_encode_and_scale(df)
+
+    partition_and_save(df, iid, seed)
+
+
+if __name__ == "__main__":
+    # train_loader, test_loader, column_names = preprocess_centralised()
+    # print(column_names)
+
+    # torch.save(train_loader, "train_loader.pth")
+    # torch.save(test_loader, "test_loader.pth")
+
+    # load from saved files
+    # train_loader = torch.load("train_loader.pth", weights_only=False)
+    # test_loader = torch.load("test_loader.pth", weights_only=False)
+    # print(train_loader.dataset[0][0].shape)
+    # print(train_loader.dataset[0][1].shape)
+
+    # print(test_loader.dataset[0][0].shape)
+    # print(test_loader.dataset[0][1].shape)
+
+    preprocess_federated(iid=True, seed=42)
+    # preprocess_federated(iid=False, seed=42)
