@@ -5,11 +5,12 @@ from torch.utils.data import DataLoader
 # PETs
 from opacus import PrivacyEngine
 
+from sklearn.metrics import precision_score, recall_score, f1_score
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def train(
+def train_model(
     model: nn.Module,
     train_loader: DataLoader,
     epochs: int = 5,
@@ -35,7 +36,9 @@ def train(
     Returns:
         nn.Module: Trained model.
     """
+    print(f"{'-' * 5} Beginning model training")
     model = model.to(device)
+    print(f"{'-' * 10} Using {device} for model training")
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -61,7 +64,7 @@ def train(
             loss.backward()
             optimizer.step()
 
-            if batch % 100 == 0:
+            if batch % 500 == 0:
                 print(
                     f"Epoch {epoch+1} | Batch {batch} | Loss: {loss.item():.4f}")
 
@@ -70,7 +73,8 @@ def train(
 
 def test_model(
     model: nn.Module,
-    test_loader: DataLoader
+    test_loader: DataLoader,
+    global_model: bool = True
 ) -> float:
     """
     Evaluate a model on the test set.
@@ -78,16 +82,22 @@ def test_model(
     Args:
         model (nn.Module): Trained model.
         test_loader (DataLoader): Test data.
+        global_model (bool): Whether to calculate additional metrics for global model.
 
     Returns:
         float: Accuracy
     """
+    print(f"{'-' * 5} Beginning model testing")
+
     model = model.to(device)
     model.eval()
     correct = 0
     total = 0
     loss_total = 0
     criterion = nn.CrossEntropyLoss()
+
+    y_true = []
+    y_pred = []
 
     with torch.no_grad():
         for X, y in test_loader:
@@ -99,7 +109,19 @@ def test_model(
             correct += (predictions == y).sum().item()
             total += y.size(0)
 
-    accuracy = correct / total * 100
+            if global_model:
+                y_true.extend(y.cpu().numpy())
+                y_pred.extend(predictions.cpu().numpy())
+
+    accuracy = correct / total
     avg_loss = loss_total / len(test_loader)
     print(f"Test Accuracy: {accuracy:.2f}% | Avg Loss: {avg_loss:.4f}")
-    return accuracy
+
+    if global_model:
+        precision = precision_score(y_true, y_pred, average='weighted')
+        recall = recall_score(y_true, y_pred, average='weighted')
+        f1 = f1_score(y_true, y_pred, average='weighted')
+        print(
+            f"Precision: {precision:.4f} | Recall: {recall:.4f} | F1 Score: {f1:.4f}")
+
+    return avg_loss, {'accuracy': accuracy, 'precision': precision, 'recall': recall, 'f1': f1} if global_model else accuracy
