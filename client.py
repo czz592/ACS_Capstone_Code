@@ -3,15 +3,19 @@ import torch
 
 from model.architecture import DNN, CNN
 from model.training import train_model, test_model
-import dataset.preprocessing as preprocessing
 
 from collections import OrderedDict
 
+from codecarbon import EmissionsTracker
+from energy_tracker.tracker import EnergyTracker
+import time
+
 
 class IoTClient(fl.client.NumPyClient):
-    def __init__(self, cid: int, model: str = "CNN"):
+    def __init__(self, cid: int, model: str = "CNN", train_loader=None, test_loader=None, dp: bool = False):
         self.cid = cid
-        self.train_loader, self.test_loader, _ = preprocessing.preprocess()
+        self.train_loader = train_loader
+        self.test_loader = test_loader
         input_dim = self.train_loader.dataset[0][0].shape[0]
         if model == "DNN":
             self.model = DNN(input_dim=input_dim)
@@ -19,6 +23,7 @@ class IoTClient(fl.client.NumPyClient):
             self.model = CNN(input_dim=input_dim)
         else:
             raise ValueError(f"Unknown model: {model}")
+        self.dp = dp
 
     def get_parameters(self, config=None):
         return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
@@ -30,10 +35,28 @@ class IoTClient(fl.client.NumPyClient):
 
     def fit(self, parameters, config):
         self.set_parameters(parameters)
-        train_model(self.model, self.train_loader, epochs=1, dp=True)
+        tracker = EnergyTracker()
+        if self.dp:
+            # track time, energy
+            tracker.log_energy_consumption()
+            start_time = time.time()
+            train_model(self.model, self.train_loader, epochs=1, dp=True)
+            end_time = time.time()
+            tracker.stop_tracker()
+            tracker.shutdown()
+            print(f"Training time: {end_time - start_time}")
+        else:
+            # track time, energy
+            tracker.log_energy_consumption()
+            start_time = time.time()
+            train_model(self.model, self.train_loader, epochs=1, dp=False)
+            end_time = time.time()
+            tracker.stop_tracker()
+            tracker.shutdown()
+            print(f"Training time: {end_time - start_time}")
         return self.get_parameters(), len(self.train_loader.dataset), {}
 
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
         loss, acc = test_model(self.model, self.test_loader)
-        return float(loss), {"accuracy": float(acc)}
+        return float(loss), len(self.test_loader.dataset), {"accuracy": float(acc)}
