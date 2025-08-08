@@ -53,7 +53,7 @@ def client_fn(context: Context):
     train_loader = preprocessing.tensorise_and_wrap(X_train, y_train)
     test_loader = preprocessing.tensorise_and_wrap(X_test, y_test)
 
-    return IoTClient(cid=cid, train_loader=train_loader, test_loader=test_loader, dp=True).to_client()
+    return IoTClient(cid=cid, train_loader=train_loader, test_loader=test_loader, dp=False, noise_multiplier=0.25).to_client()
 
 
 def server_fn(context: Context):
@@ -62,7 +62,7 @@ def server_fn(context: Context):
     global_model_init = ndarrays_to_parameters(params)
     config = ServerConfig(num_rounds=num_rounds)
     strategy = FedAvgCustom(
-        file_name="fedavg",
+        file_name=f"{num_clients}_clients" if iid else f"{num_clients}_clients_non_iid",
         num_rounds=num_rounds,
         fraction_fit=1.0,  # Sample 100% of available clients for training
         fraction_evaluate=0.5,  # Sample 50% of available clients for evaluation
@@ -118,9 +118,9 @@ def main(federate=True):
             metrics_df = pd.DataFrame.from_dict(metrics, orient="index").T
             metrics_df.to_csv(f"output/centralised/noise_{noise}.csv")
 
-        # explain model
-        explain_with_shap(model, test_loader)
-        explain_with_captum(model, test_loader)
+        # # explain model
+        # explain_with_shap(model, test_loader)
+        # explain_with_captum(model, test_loader)
 
 
 if __name__ == "__main__":
@@ -135,5 +135,5 @@ if __name__ == "__main__":
     | Federated      | Yes | Yes | Yes | XAI interpretability snapshot   |
     | (Optional) Any | Any | Any | Yes | XAI interpretability comparison |
     """
-    main(federate=False)
+    # main(federate=False)
     main(federate=True)
