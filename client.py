@@ -12,7 +12,7 @@ import time
 
 
 class IoTClient(fl.client.NumPyClient):
-    def __init__(self, cid: int, model: str = "CNN", train_loader=None, test_loader=None, dp: bool = False):
+    def __init__(self, cid: int, model: str = "CNN", train_loader=None, test_loader=None, dp: bool = False, noise_multiplier: float = 1.0):
         self.cid = cid
         self.train_loader = train_loader
         self.test_loader = test_loader
@@ -24,6 +24,7 @@ class IoTClient(fl.client.NumPyClient):
         else:
             raise ValueError(f"Unknown model: {model}")
         self.dp = dp
+        self.noise_multiplier = noise_multiplier
 
     def get_parameters(self, config=None):
         return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
@@ -36,25 +37,17 @@ class IoTClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
         self.set_parameters(parameters)
         tracker = EnergyTracker()
-        if self.dp:
-            # track time, energy
-            tracker.log_energy_consumption()
-            start_time = time.time()
-            train_model(self.model, self.train_loader, epochs=1, dp=True)
-            end_time = time.time()
-            tracker.stop_tracker()
-            tracker.shutdown()
-            print(f"Training time: {end_time - start_time}")
-        else:
-            # track time, energy
-            tracker.log_energy_consumption()
-            start_time = time.time()
-            train_model(self.model, self.train_loader, epochs=1, dp=False)
-            end_time = time.time()
-            tracker.stop_tracker()
-            tracker.shutdown()
-            print(f"Training time: {end_time - start_time}")
-        return self.get_parameters(), len(self.train_loader.dataset), {}
+        # track time, energy
+        tracker.log_energy_consumption()
+        start_time = time.time()
+        train_model(self.model, self.train_loader, epochs=1,
+                    dp=self.dp, noise_multiplier=self.noise_multiplier)
+        end_time = time.time()
+        tracker.stop_tracker()
+        tracker.shutdown()
+        print(f"Training time: {end_time - start_time}")
+        # TODO: implement custom tracker to return value
+        return self.get_parameters(), len(self.train_loader.dataset), {'time': end_time - start_time, 'energy': 0}
 
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
