@@ -57,6 +57,7 @@ class FedAvgCustom(FedAvg):
         loss, metrics = super().evaluate(server_round, parameters)
         self.loss_list.append(loss)
         self.metrics_list.append(metrics)
+        print("Round", server_round, "loss:", loss, "metrics:", metrics)
         if server_round == self.num_rounds:
             # Save to CSV
             metrics_df = pd.DataFrame(self.metrics_list)

@@ -53,7 +53,7 @@ def client_fn(context: Context):
     train_loader = preprocessing.tensorise_and_wrap(X_train, y_train)
     test_loader = preprocessing.tensorise_and_wrap(X_test, y_test)
 
-    return IoTClient(cid=cid, train_loader=train_loader, test_loader=test_loader, dp=False, noise_multiplier=0.25).to_client()
+    return IoTClient(cid=cid, model="CNN", train_loader=train_loader, test_loader=test_loader, dp=True).to_client()
 
 
 def server_fn(context: Context):
@@ -95,28 +95,51 @@ def main(federate=True):
         # train_loader, test_loader, _ = preprocessing.preprocess()
         global train_loader
         global test_loader
-
         """
-        model = CNN(input_dim=train_loader.dataset[0][0].shape[0])
-        train_model(model, train_loader, epochs=5, dp=False)
-        loss, metrics = test_model(
-            model, test_loader, global_model=True) 
-        print(f"Loss: {loss} | Metrics: {metrics}")
-        # write metrics to output/centralised/{file_name}.csv
-        metrics_df = pd.DataFrame.from_dict(metrics, orient="index").T
-        metrics_df.to_csv(f"output/centralised/baseline_dnn.csv")
-        """
-
-        # evaluate different DP noise levels
-        for noise in np.arange(0, 1, 0.25):
-            model = CNN(input_dim=train_loader.dataset[0][0].shape[0])
+        for learning_rate in [0.001, 0.01, 0.1]:
+            model = DNN(input_dim=input_dim)
             train_model(model, train_loader, epochs=5,
-                        dp=True, noise_multiplier=noise)
-            loss, metrics = test_model(model, test_loader, global_model=True)
+                        dp=False, lr=learning_rate)
+            loss, metrics = test_model(
+                model, test_loader, global_model=True)
             print(f"Loss: {loss} | Metrics: {metrics}")
             # write metrics to output/centralised/{file_name}.csv
             metrics_df = pd.DataFrame.from_dict(metrics, orient="index").T
-            metrics_df.to_csv(f"output/centralised/noise_{noise}.csv")
+            metrics_df.to_csv(
+                f"output/centralised/lr_{learning_rate}_dnn_metrics.csv")
+            model = CNN(input_dim=input_dim)
+            train_model(model, train_loader, epochs=5,
+                        dp=False, lr=learning_rate)
+            loss, metrics = test_model(
+                model, test_loader, global_model=True)
+            print(f"Loss: {loss} | Metrics: {metrics}")
+            # write metrics to output/centralised/{file_name}.csv
+            metrics_df = pd.DataFrame.from_dict(metrics, orient="index").T
+            metrics_df.to_csv(
+                f"output/centralised/lr_{learning_rate}_cnn_metrics.csv")"""
+
+        # train dnn with dp
+        for noise_multiplier in [0.25, 0.5, 0.75, 1.0]:
+            model = DNN(input_dim=input_dim)
+            train_model(model, train_loader, epochs=5,
+                        dp=True, noise_multiplier=noise_multiplier)
+            loss, metrics = test_model(
+                model, test_loader, global_model=True)
+            # write metrics to output/centralised/{file_name}.csv
+            metrics_df = pd.DataFrame.from_dict(metrics, orient="index").T
+            metrics_df.insert(0, "noise_multiplier", noise_multiplier)
+            metrics_df.to_csv(
+                f"output/centralised/noise_{noise_multiplier}_dnn_metrics.csv")
+            model = CNN(input_dim=input_dim)
+            train_model(model, train_loader, epochs=5,
+                        dp=True, noise_multiplier=noise_multiplier)
+            loss, metrics = test_model(
+                model, test_loader, global_model=True)
+            # write metrics to output/centralised/{file_name}.csv
+            metrics_df = pd.DataFrame.from_dict(metrics, orient="index").T
+            metrics_df.insert(0, "noise_multiplier", noise_multiplier)
+            metrics_df.to_csv(
+                f"output/centralised/noise_{noise_multiplier}_cnn_metrics.csv")
 
         # # explain model
         # explain_with_shap(model, test_loader)
